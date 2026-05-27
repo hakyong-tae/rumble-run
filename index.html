@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rumble Run</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: 'Arial Rounded MT Bold', Arial, sans-serif; }
+    #canvas { display: block; width: 100vw; height: 100vh; }
+
+    #ui { position: fixed; inset: 0; pointer-events: none; }
+
+    /* Golden coin icon (matches the in-game #ffe234 gold marble) */
+    .coin-icon {
+      display: inline-block; width: 1em; height: 1em; border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #fff6b0 0%, #ffe234 45%, #e8a200 100%);
+      border: 1px solid #c8860a;
+      box-shadow: inset -1px -1px 2px rgba(150,95,0,0.55), 0 1px 1px rgba(0,0,0,0.25);
+      vertical-align: -0.12em; position: relative;
+    }
+    .coin-icon::after {
+      content: ''; position: absolute; inset: 22%; border-radius: 50%;
+      border: 1px solid rgba(200,134,10,0.5);
+    }
+    .screen { position: absolute; inset: 0; display: none; flex-direction: column;
+              align-items: center; justify-content: center; pointer-events: all; }
+    .screen.show { display: flex; }
+    .screen.overlay { background: rgba(0,0,0,0.55); backdrop-filter: blur(6px); }
+    .screen.menu-bg { background: linear-gradient(180deg, #87ceeb 0%, #b0e2ff 100%); }
+
+    /* ── Polished main menu ─────────────────────────────────────────────── */
+    #menu-screen {
+      background: radial-gradient(circle at 20% 10%, #4a3a8a 0%, #1a1437 55%, #0a0820 100%);
+      overflow: hidden; gap: 0;
+    }
+    /* Floating soft "blobs" behind everything */
+    #menu-screen::before, #menu-screen::after {
+      content: ''; position: absolute; border-radius: 50%; filter: blur(70px);
+      pointer-events: none; z-index: 0;
+    }
+    #menu-screen::before {
+      width: 460px; height: 460px; background: #ff5fa2; opacity: 0.35;
+      top: -80px; left: -80px; animation: float 11s ease-in-out infinite;
+    }
+    #menu-screen::after {
+      width: 520px; height: 520px; background: #4cc9ff; opacity: 0.3;
+      bottom: -120px; right: -120px; animation: float 13s ease-in-out infinite reverse;
+    }
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0); }
+      33%      { transform: translate(30px, 20px); }
+      66%      { transform: translate(-20px, 30px); }
+    }
+    .menu-stack {
+      position: relative; z-index: 1; display: flex; flex-direction: column;
+      align-items: center; gap: 28px; padding: 28px 24px;
+    }
+    /* Top stat bar */
+    .stat-bar {
+      position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 10px; z-index: 2; flex-wrap: wrap; justify-content: center;
+    }
+    .stat-chip {
+      background: rgba(255,255,255,0.10); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 14px; padding: 8px 14px; color: #fff;
+      font-size: 14px; font-weight: bold; display: flex; align-items: center; gap: 6px;
+    }
+    .stat-chip .chip-label { opacity: 0.7; font-weight: normal; font-size: 12px; }
+    .stat-chip.gold { color: #ffe44d; }
+
+    /* Title */
+    h1.brand {
+      font-size: clamp(48px, 8vw, 92px);
+      font-weight: 900; letter-spacing: 3px; line-height: 1;
+      background: linear-gradient(160deg, #ffd24a 0%, #ff6f9b 40%, #c459ff 80%, #4cc9ff 100%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 6px 18px rgba(120,80,200,0.6));
+      margin: 0;
+    }
+    .brand-sub {
+      color: rgba(255,255,255,0.75); font-size: 14px; letter-spacing: 8px;
+      text-transform: uppercase; margin-top: 6px;
+    }
+
+    /* Action card grid */
+    .menu-grid {
+      display: grid; grid-template-columns: repeat(4, 168px); gap: 14px;
+      width: auto; max-width: 96vw; margin-top: 4px;
+    }
+    .menu-card {
+      position: relative; pointer-events: all; cursor: pointer;
+      background: rgba(255,255,255,0.09); backdrop-filter: blur(14px);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 22px; padding: 22px 14px 18px;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      color: #fff; text-align: center; font-family: inherit;
+      transition: transform 0.18s ease, background 0.2s, box-shadow 0.2s, border-color 0.2s;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+    }
+    .menu-card:hover {
+      transform: translateY(-6px);
+      background: rgba(255,255,255,0.16);
+      border-color: rgba(255,255,255,0.45);
+      box-shadow: 0 14px 28px rgba(0,0,0,0.4), 0 0 32px rgba(120,180,255,0.25);
+    }
+    .menu-card:active { transform: translateY(-2px) scale(0.98); }
+    .menu-card .ic { font-size: 44px; line-height: 1; }
+    .menu-card .ttl {
+      font-size: 18px; font-weight: bold; letter-spacing: 0.5px; margin-top: 4px;
+    }
+    .menu-card .desc {
+      font-size: 12px; opacity: 0.75; line-height: 1.35; min-height: 32px;
+    }
+    .menu-card.primary {
+      background: linear-gradient(160deg, rgba(255,210,74,0.95), rgba(255,111,155,0.85));
+      border-color: rgba(255,255,255,0.5);
+      color: #2a1840;
+    }
+    .menu-card.primary .desc { color: rgba(42,24,64,0.7); }
+    .menu-card.primary:hover {
+      box-shadow: 0 16px 36px rgba(0,0,0,0.45), 0 0 36px rgba(255,160,80,0.5);
+    }
+
+    /* Equipped skin preview */
+    .equipped-bar {
+      display: flex; align-items: center; gap: 12px; color: #fff;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 18px; padding: 8px 18px;
+      backdrop-filter: blur(8px); margin-top: 8px;
+    }
+    .equipped-bar .lbl { font-size: 12px; opacity: 0.7; text-transform: uppercase; letter-spacing: 2px; }
+    .equipped-bar .skin-mini {
+      width: 28px; height: 28px; border-radius: 50%; position: relative;
+      box-shadow: inset -3px -3px 6px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.35);
+    }
+    .equipped-bar .skin-mini-ring {
+      position: absolute; left: 0; right: 0; top: 40%; height: 22%;
+      border-radius: 50%; transform: scaleY(0.45);
+    }
+    .equipped-bar .skin-name { font-weight: bold; }
+
+    /* Mobile adjustments for the polished menu */
+    @media (max-width: 768px) {
+      .menu-grid { grid-template-columns: repeat(2, 154px); }
+    }
+    @media (max-width: 480px) {
+      .menu-grid { grid-template-columns: repeat(2, 138px); gap: 10px; }
+      .menu-card { padding: 16px 10px 14px; }
+      .menu-card .ic  { font-size: 36px; }
+      .menu-card .ttl { font-size: 15px; }
+      .menu-card .desc { font-size: 11px; min-height: 30px; }
+      .brand-sub { font-size: 11px; letter-spacing: 5px; }
+      .menu-stack { gap: 18px; padding: 18px 14px; }
+    }
+    @media (orientation: landscape) and (max-height: 480px) {
+      .menu-grid { grid-template-columns: repeat(4, 130px); gap: 8px; }
+      .menu-card { padding: 12px 10px; }
+      .menu-card .ic  { font-size: 30px; }
+      .menu-card .ttl { font-size: 14px; }
+      .menu-card .desc { font-size: 10px; min-height: 26px; }
+      .menu-stack { gap: 12px; padding: 12px; }
+    }
+
+    h1.title {
+      font-size: 56px; font-weight: 900; color: #fff;
+      text-shadow: 0 4px 0 #2a6da8, 0 6px 12px rgba(0,0,0,0.3); margin-bottom: 10px;
+    }
+    h2.heading {
+      font-size: 42px; color: #fff; font-weight: 900;
+      text-shadow: 0 3px 0 #2a6da8; margin-bottom: 24px;
+    }
+    .sub { color: rgba(255,255,255,0.85); font-size: 18px; margin-bottom: 30px; }
+
+    button.btn, .menu-btn {
+      background: linear-gradient(180deg,#5de,#29b); border: none; border-radius: 28px;
+      padding: 14px 48px; font-size: 22px; font-weight: bold; color: #fff;
+      cursor: pointer; pointer-events: all;
+      box-shadow: 0 5px 0 #1a7a99, 0 6px 16px rgba(0,0,0,0.2);
+      transition: transform 0.08s; margin: 6px;
+      min-width: 240px;
+      font-family: inherit;
+    }
+    button.btn:active, .menu-btn:active { transform: translateY(3px); box-shadow: 0 2px 0 #1a7a99; }
+    button.btn.small { padding: 8px 22px; font-size: 16px; min-width: auto; border-radius: 18px; }
+    button.btn.warn { background: linear-gradient(180deg,#f87,#c42); box-shadow: 0 5px 0 #802000; }
+
+    .top-bar {
+      position: absolute; top: 10px; left: 10px; right: 10px; display: flex;
+      justify-content: space-between; align-items: center; pointer-events: none;
+    }
+    .top-bar > * { pointer-events: all; }
+    #coin-display {
+      background: rgba(0,0,0,0.55); border-radius: 20px; padding: 6px 16px;
+      color: #ffe44d; font-size: 18px; font-weight: bold;
+    }
+    .back-btn {
+      background: rgba(0,0,0,0.55); color: #fff; border: none; padding: 8px 16px;
+      font-size: 16px; border-radius: 18px; cursor: pointer; font-family: inherit;
+    }
+
+    /* HUD */
+    #hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+           display: flex; align-items: stretch; gap: 12px; }
+    #rank-badge {
+      background: rgba(20,16,40,0.5); backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 18px; padding: 7px 22px;
+      color: #fff; display: flex; flex-direction: column; align-items: center; line-height: 1;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+    }
+    .rank-label { font-size: 10px; letter-spacing: 3px; opacity: 0.6; margin-bottom: 4px; }
+    .rank-value { font-size: 26px; font-weight: 900; display: flex; align-items: baseline; }
+    .rank-value #rank-text { color: #ffe44d; text-shadow: 0 2px 8px rgba(255,200,40,0.4); }
+    .rank-value #rank-total { font-size: 15px; opacity: 0.55; font-weight: bold; margin-left: 3px; }
+    #coin-hud {
+      background: rgba(20,16,40,0.5); backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 18px; padding: 0 20px;
+      color: #ffe44d; font-size: 24px; font-weight: 900;
+      display: flex; align-items: center; gap: 9px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+    }
+    #coin-hud .coin-icon { width: 22px; height: 22px; }
+    #progress-wrap {
+      position: absolute; bottom: 26px; left: 50%; transform: translateX(-50%);
+      width: 460px; max-width: 90vw;
+    }
+    #progress-bg {
+      background: rgba(20,16,40,0.45); backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px; height: 14px; position: relative;
+    }
+    #progress-fill {
+      height: 100%; background: linear-gradient(90deg,#ffd24a,#ff6f9b,#4cc9ff);
+      border-radius: 10px; transition: width 0.12s; width: 0%;
+      box-shadow: 0 0 10px rgba(120,180,255,0.5);
+    }
+    #progress-label { display: flex; justify-content: space-between; color: #fff;
+                      font-size: 11px; margin-top: 5px; opacity: 0.65; letter-spacing: 1px; }
+    #progress-label .flag-finish { font-size: 13px; }
+    #racing-ui { display: none; }
+    #racing-ui.show { display: block; }
+
+    /* Missile hit toast */
+    #hit-toast {
+      position: absolute; left: 18px; top: 42%; transform: translateY(-50%) translateX(-20px);
+      background: rgba(200,40,40,0.92); color: #fff; font-weight: bold;
+      padding: 10px 16px; border-radius: 12px; font-size: 15px; line-height: 1.4;
+      max-width: 240px; opacity: 0; pointer-events: none;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+      transition: opacity 0.25s, transform 0.25s;
+    }
+    #hit-toast.show { opacity: 1; transform: translateY(-50%) translateX(0); }
+    #hit-toast b { color: #ffe44d; }
+
+    /* Race countdown overlay */
+    #countdown {
+      position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
+      background: rgba(180,30,30,0.85); color: #fff; font-weight: bold;
+      padding: 8px 20px; border-radius: 18px; font-size: 22px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4); display: none;
+      letter-spacing: 1px; pointer-events: none;
+    }
+    #countdown.show { display: block; }
+    #countdown.urgent { background: rgba(220,40,40,0.95); animation: pulse 0.5s infinite alternate; }
+    @keyframes pulse { from { transform: translateX(-50%) scale(1); }
+                       to   { transform: translateX(-50%) scale(1.08); } }
+
+    /* Touch joystick (mobile) */
+    .touch-pad {
+      display: none;
+      position: absolute; bottom: 80px;
+      width: 72px; height: 72px;
+      background: rgba(0,0,0,0.45);
+      border: 3px solid rgba(255,255,255,0.5);
+      border-radius: 50%; color: #fff; font-size: 36px;
+      text-align: center; line-height: 66px; user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      pointer-events: all; touch-action: none;
+    }
+    .touch-pad.left  { left: 20px; }
+    .touch-pad.right { left: 110px; }
+    .touch-pad:active { background: rgba(255,255,255,0.35); transform: scale(0.95); }
+    @media (pointer: coarse), (max-width: 768px) {
+      .touch-pad { display: block; }
+    }
+
+    /* Responsive breakpoints */
+    @media (max-width: 768px) {
+      h1.title { font-size: 40px; }
+      h2.heading { font-size: 32px; margin-bottom: 18px; }
+      .menu-btn { min-width: 200px; font-size: 18px; padding: 12px 36px; }
+      #shop-grid { grid-template-columns: repeat(3, 1fr); max-width: 540px; }
+      .shop-card { min-width: auto; padding: 10px; }
+      .shop-ball { width: 56px; height: 56px; }
+      #rank-badge { padding: 5px 16px; }
+      .rank-value { font-size: 22px; }
+      #coin-hud { font-size: 20px; padding: 0 14px; }
+      #progress-wrap { width: 88vw; bottom: 18px; }
+      #boost-btn { width: 64px; height: 64px !important; right: 16px !important; bottom: 60px !important; }
+      .lb-row { grid-template-columns: 36px 26px 1fr 50px; font-size: 14px; }
+    }
+    @media (max-width: 480px) {
+      h1.title { font-size: 30px; margin-bottom: 6px; }
+      h2.heading { font-size: 24px; margin-bottom: 14px; }
+      .sub { font-size: 14px; margin-bottom: 18px; }
+      .menu-btn { min-width: 180px; font-size: 16px; padding: 10px 28px; margin: 4px; }
+      button.btn { font-size: 18px; padding: 12px 36px; }
+      #shop-grid { grid-template-columns: repeat(2, 1fr); max-width: 360px; gap: 10px; }
+      .shop-card { padding: 8px; }
+      .shop-ball { width: 50px; height: 50px; }
+      .shop-name { font-size: 12px; }
+      .shop-price { font-size: 11px; }
+      .settings-box { min-width: auto; width: 92vw; padding: 14px 16px; gap: 12px; }
+      .setting-row label { font-size: 14px; }
+      .setting-row input[type="range"] { width: 110px; }
+      .lobby-box { min-width: auto; width: 92vw; }
+      #leaderboard { min-width: auto; width: 92vw; max-height: 50vh; font-size: 13px; }
+      #finish-title { font-size: 38px; }
+      #finish-coins { font-size: 16px; }
+      #countdown { font-size: 16px; padding: 6px 14px; top: 58px; }
+    }
+    @media (orientation: landscape) and (max-height: 480px) {
+      h1.title, h2.heading { font-size: 28px; margin-bottom: 6px; }
+      .sub { font-size: 12px; margin-bottom: 10px; }
+      .menu-btn { padding: 8px 24px; font-size: 14px; min-width: 160px; }
+      #leaderboard { max-height: 55vh; }
+    }
+
+    /* Finish */
+    #finish-title {
+      font-size: 56px; font-weight: 900; margin-bottom: 6px;
+      text-shadow: 0 0 30px currentColor;
+    }
+    #finish-coins { font-size: 22px; color: #ffe44d; margin-bottom: 18px; }
+
+    /* Leaderboard */
+    #leaderboard, #standings {
+      display: flex; flex-direction: column; gap: 4px;
+      background: rgba(0,0,0,0.35); padding: 12px 16px; border-radius: 14px;
+      margin-bottom: 16px; min-width: 320px; max-height: 60vh; overflow: auto;
+    }
+    .lb-row {
+      display: grid; grid-template-columns: 44px 32px 1fr 60px;
+      align-items: center; gap: 10px; color: #fff;
+      padding: 4px 6px; border-radius: 8px; font-size: 16px;
+    }
+    .lb-row.you { background: rgba(255,228,77,0.18); font-weight: bold; }
+    .lb-place { font-weight: bold; color: #ffe44d; text-align: right; }
+    .lb-ball {
+      width: 26px; height: 26px; border-radius: 50%; display: inline-block;
+      position: relative; box-shadow: inset -3px -3px 6px rgba(0,0,0,0.4),
+                                       0 2px 4px rgba(0,0,0,0.35);
+    }
+    .lb-ring {
+      position: absolute; left: 0; right: 0; top: 40%; height: 22%;
+      border-radius: 50%; transform: scaleY(0.45);
+    }
+    .lb-name { text-align: left; }
+    .lb-status { font-size: 14px; opacity: 0.85; text-align: right; }
+
+    /* Shop */
+    #shop-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+      max-width: 720px; padding: 8px;
+    }
+    .shop-card {
+      background: rgba(255,255,255,0.92); border-radius: 18px; padding: 14px;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      box-shadow: 0 4px 0 rgba(0,0,0,0.15); cursor: pointer;
+      transition: transform 0.08s; min-width: 130px;
+    }
+    .shop-card:hover { transform: translateY(-2px); }
+    .shop-card.equipped { background: linear-gradient(180deg,#fffacc,#ffe066); outline: 3px solid #ff9c00; }
+    .shop-card.locked { opacity: 0.65; }
+    .shop-ball {
+      width: 70px; height: 70px; border-radius: 50%; position: relative;
+      box-shadow: inset -8px -8px 16px rgba(0,0,0,0.35), 0 4px 8px rgba(0,0,0,0.25);
+    }
+    .shop-ring {
+      position: absolute; left: 0; right: 0; top: 38%; height: 24%;
+      border-radius: 50%; transform: scaleY(0.45);
+    }
+    .shop-name { font-weight: bold; color: #333; font-size: 14px; }
+    .shop-price { font-size: 13px; color: #b8860b; font-weight: bold; }
+    .shop-card.owned .shop-price { color: #2a8a3e; }
+
+    /* Settings */
+    .settings-box {
+      background: rgba(0,0,0,0.45); border-radius: 18px; padding: 24px 28px;
+      display: flex; flex-direction: column; gap: 16px; min-width: 360px;
+    }
+    .setting-row { display: flex; justify-content: space-between; align-items: center;
+                   gap: 16px; color: #fff; }
+    .setting-row label { font-size: 17px; }
+    .setting-row input[type="range"] { width: 180px; }
+    .setting-row select, .setting-row input[type="text"] {
+      background: rgba(255,255,255,0.95); border: none; padding: 6px 10px;
+      border-radius: 10px; font-family: inherit; font-size: 16px;
+    }
+    .toggle-switch {
+      width: 50px; height: 26px; background: #555; border-radius: 13px; position: relative;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .toggle-switch.on { background: #2dc864; }
+    .toggle-switch::after {
+      content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+      background: #fff; border-radius: 50%; transition: left 0.15s;
+    }
+    .toggle-switch.on::after { left: 27px; }
+
+    /* Multi Lobby */
+    .lobby-box {
+      background: rgba(0,0,0,0.45); border-radius: 18px; padding: 22px 28px;
+      display: flex; flex-direction: column; gap: 12px; min-width: 380px; color: #fff;
+    }
+    .player-slot {
+      background: rgba(255,255,255,0.12); border-radius: 10px; padding: 8px 12px;
+      display: flex; align-items: center; gap: 10px; font-size: 16px;
+    }
+    .player-slot.empty  { color: rgba(255,255,255,0.5); font-style: italic; }
+    .player-slot.you    { background: rgba(255,228,77,0.22); font-weight: bold; }
+    .room-code {
+      font-size: 28px; font-weight: bold; color: #ffe44d; letter-spacing: 4px;
+      background: rgba(0,0,0,0.4); padding: 10px 18px; border-radius: 12px; text-align: center;
+    }
+    .row { display: flex; gap: 10px; align-items: center; }
+
+    .notice {
+      background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;
+      padding: 8px 14px; border-radius: 10px; max-width: 380px; text-align: center;
+      margin-top: 12px; opacity: 0.85;
+    }
+
+    /* Tutorial */
+    #tutorial-screen { z-index: 50; }
+    .tut-list {
+      display: flex; flex-direction: column; gap: 10px;
+      background: rgba(20,16,40,0.55); border: 1px solid rgba(255,255,255,0.15);
+      backdrop-filter: blur(10px); border-radius: 18px; padding: 20px 24px;
+      max-width: 440px; width: 90vw; margin-bottom: 22px;
+    }
+    .tut-row { display: flex; align-items: center; gap: 14px; color: #fff; }
+    .tut-ic {
+      font-size: 28px; width: 40px; min-width: 40px; text-align: center;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .tut-ic .coin-icon { width: 26px; height: 26px; }
+    .tut-row .tut-text { font-size: 15px; line-height: 1.35; }
+    .tut-row .tut-text b { color: #ffe44d; }
+    .tut-row .tut-desc { opacity: 0.8; font-size: 13px; }
+    @media (max-width: 480px) {
+      .tut-list { padding: 14px 16px; gap: 8px; }
+      .tut-ic { font-size: 22px; width: 32px; min-width: 32px; }
+      .tut-row .tut-text { font-size: 13px; }
+      .tut-row .tut-desc { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="ui">
+
+    <!-- Main Menu -->
+    <div id="menu-screen" class="screen show">
+      <div class="stat-bar">
+        <div class="stat-chip gold"><span class="coin-icon"></span> <span id="menu-coins">0</span></div>
+        <div class="stat-chip">🏆 <span class="chip-label">Best</span> <span id="menu-best">—</span></div>
+        <div class="stat-chip">🎯 <span class="chip-label">Races</span> <span id="menu-races">0</span></div>
+      </div>
+
+      <div class="menu-stack">
+        <div style="text-align:center;">
+          <h1 class="brand">RUMBLE&nbsp;RUN</h1>
+          <div class="brand-sub">race · dodge · ram · win</div>
+        </div>
+
+        <div class="menu-grid">
+          <button class="menu-card primary" data-go="single">
+            <span class="ic">🏁</span>
+            <span class="ttl">Single Race</span>
+            <span class="desc">Solo run against 7 CPUs</span>
+          </button>
+          <button class="menu-card" data-go="multi">
+            <span class="ic">👥</span>
+            <span class="ttl">Multiplayer</span>
+            <span class="desc">Up to 4 humans + AI</span>
+          </button>
+          <button class="menu-card" data-go="shop">
+            <span class="ic">🛒</span>
+            <span class="ttl">Shop</span>
+            <span class="desc">Buy new marbles</span>
+          </button>
+          <button class="menu-card" data-go="settings">
+            <span class="ic">⚙️</span>
+            <span class="ttl">Settings</span>
+            <span class="desc">Audio · data · more</span>
+          </button>
+        </div>
+
+        <div class="equipped-bar">
+          <span class="lbl">Equipped</span>
+          <span id="menu-skin-mini" class="skin-mini">
+            <span class="skin-mini-ring"></span>
+          </span>
+          <span class="skin-name" id="menu-skin-name">Classic</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Single mode pre-game -->
+    <div id="single-screen" class="screen menu-bg">
+      <h2 class="heading">🏁 Single Race</h2>
+      <p class="sub">8 marbles — beat them all to claim 1st!</p>
+      <button id="start-btn" class="btn">START</button>
+      <button id="how-to-play-btn" class="btn small" style="margin-top:10px; background:linear-gradient(180deg,#aaa,#777); box-shadow:0 4px 0 #555;">❓ How to Play</button>
+      <p style="color:rgba(255,255,255,0.7); font-size:14px; margin-top:14px;">
+        ← A / D → to move &nbsp;|&nbsp; Space = use item &nbsp;|&nbsp; Esc = back
+      </p>
+      <button class="back-btn" style="position:absolute; top:14px; left:14px;" data-go="menu">← Back</button>
+    </div>
+
+    <!-- Multiplayer lobby -->
+    <div id="multi-screen" class="screen menu-bg">
+      <h2 class="heading">👥 Multiplayer</h2>
+      <div id="multi-home">
+        <button class="menu-btn" id="create-room-btn">+ Create Room</button>
+        <div class="row" style="margin-top:14px; justify-content:center;">
+          <input type="text" id="join-code-input" placeholder="ROOM CODE" maxlength="6"
+                 style="background:rgba(255,255,255,0.95); border:none; padding:10px 14px;
+                        border-radius:14px; font-family:inherit; font-size:18px;
+                        letter-spacing:3px; width:170px; text-align:center; text-transform:uppercase;" />
+          <button class="btn small" id="join-room-btn">Join</button>
+        </div>
+      </div>
+      <div id="multi-room" style="display:none;">
+        <div class="lobby-box">
+          <div style="font-size:14px; opacity:0.8;">ROOM CODE</div>
+          <div class="room-code" id="room-code">------</div>
+          <div style="font-size:13px; opacity:0.7;">Up to 4 humans + AI fillers (8 total)</div>
+          <div id="player-slots"></div>
+          <button class="btn" id="start-multi-btn" style="margin-top:8px;">START RACE</button>
+          <button class="back-btn" id="leave-room-btn">Leave Room</button>
+        </div>
+        <div class="notice">
+          Local-only demo. Real online multiplayer would need a server (WebSocket / Verse8).
+        </div>
+      </div>
+      <button class="back-btn" style="position:absolute; top:14px; left:14px;" data-go="menu">← Back</button>
+    </div>
+
+    <!-- Shop -->
+    <div id="shop-screen" class="screen menu-bg" style="overflow-y:auto;">
+      <h2 class="heading">🛒 Shop</h2>
+      <p class="sub">Spend coins on new marbles</p>
+      <div id="shop-grid"></div>
+      <div class="top-bar">
+        <button class="back-btn" data-go="menu">← Back</button>
+        <div id="coin-display"><span class="coin-icon"></span> <span class="shop-coins">0</span></div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div id="settings-screen" class="screen menu-bg">
+      <h2 class="heading">⚙️ Settings</h2>
+      <div class="settings-box">
+        <div class="setting-row">
+          <label>🔊 SFX Volume</label>
+          <input type="range" min="0" max="100" id="sfx-slider" />
+          <span id="sfx-value" style="width:32px; text-align:right;">100</span>
+        </div>
+        <div class="setting-row">
+          <label>🎵 BGM Volume</label>
+          <input type="range" min="0" max="100" id="bgm-slider" />
+          <span id="bgm-value" style="width:32px; text-align:right;">40</span>
+        </div>
+        <div class="setting-row">
+          <label>🖱️ Camera Shake</label>
+          <div class="toggle-switch on" id="shake-toggle"></div>
+        </div>
+        <div class="setting-row">
+          <label>🌑 Shadows</label>
+          <div class="toggle-switch on" id="shadows-toggle"></div>
+        </div>
+        <div class="setting-row">
+          <label>📊 Show ball markers</label>
+          <div class="toggle-switch on" id="markers-toggle"></div>
+        </div>
+        <div class="setting-row" style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 12px; flex-direction:column; align-items:stretch; gap: 8px;">
+          <button class="btn warn small" id="reset-data-btn">🗑️ Reset All User Data</button>
+          <div style="color:rgba(255,255,255,0.6); font-size:12px; text-align:center;">
+            Clears coins, owned skins, settings, and best ranks.
+          </div>
+          <div style="color:rgba(255,255,255,0.4); font-size:11px; text-align:center; margin-top:6px;">
+            made by Yong
+          </div>
+        </div>
+      </div>
+      <button class="back-btn" style="position:absolute; top:14px; left:14px;" data-go="menu">← Back</button>
+    </div>
+
+    <!-- Race countdown (outside racing-ui so it remains visible during cinematic) -->
+    <div id="countdown">⏱️ Race ends in <span id="countdown-num">10</span>s</div>
+
+    <!-- Missile hit toast (left side, Kart-Rider style) -->
+    <div id="hit-toast"></div>
+
+    <!-- In-race HUD -->
+    <div id="racing-ui">
+      <div id="hud">
+        <div id="rank-badge">
+          <span class="rank-label">RANK</span>
+          <span class="rank-value"><span id="rank-text">4th</span><span id="rank-total">/ 8</span></span>
+        </div>
+        <div id="coin-hud"><span class="coin-icon"></span> <span id="coin-count">0</span></div>
+      </div>
+      <div id="progress-wrap">
+        <div id="progress-bg"><div id="progress-fill"></div></div>
+        <div id="progress-label"><span>🚦 START</span><span class="flag-finish">🏁 FINISH</span></div>
+      </div>
+      <div class="touch-pad left"  id="touch-left">◀</div>
+      <div class="touch-pad right" id="touch-right">▶</div>
+    </div>
+
+    <!-- Tutorial overlay -->
+    <div id="tutorial-screen" class="screen overlay">
+      <h2 class="heading">How to Play</h2>
+      <div class="tut-list">
+        <div class="tut-row"><span class="tut-ic">🕹️</span>
+          <span class="tut-text"><b>Move</b> — <span class="tut-desc" id="tut-move">← / → or A / D keys</span></span></div>
+        <div class="tut-row"><span class="tut-ic">❓</span>
+          <span class="tut-text"><b>Item Box</b> — <span class="tut-desc">roll through to grab a random item</span></span></div>
+        <div class="tut-row"><span class="tut-ic">⚡🚀</span>
+          <span class="tut-text"><b>Boost / Missile</b> — <span class="tut-desc" id="tut-use">press <b>Space</b> (or tap ⚡) to use it</span></span></div>
+        <div class="tut-row"><span class="tut-ic">🟩</span>
+          <span class="tut-text"><b>Green Pad</b> — <span class="tut-desc">speed-boost strip</span></span></div>
+        <div class="tut-row"><span class="tut-ic">🔼</span>
+          <span class="tut-text"><b>Blue Ramp</b> — <span class="tut-desc">launches you into the air</span></span></div>
+        <div class="tut-row"><span class="tut-ic"><span class="coin-icon"></span></span>
+          <span class="tut-text"><b>Coins</b> — <span class="tut-desc">score; spend in the Shop on new marbles</span></span></div>
+        <div class="tut-row"><span class="tut-ic">🏁</span>
+          <span class="tut-text"><b>Goal</b> — <span class="tut-desc">reach the finish &amp; don't fall off the track!</span></span></div>
+      </div>
+      <button class="btn" id="tutorial-ok">Got it!</button>
+    </div>
+
+    <!-- Finish screen -->
+    <div id="finish-screen" class="screen overlay">
+      <div id="finish-title"></div>
+      <div id="finish-coins"></div>
+      <div id="leaderboard"></div>
+      <div class="row">
+        <button id="retry-btn" class="btn">PLAY AGAIN</button>
+        <button id="finish-menu-btn" class="btn" style="background:linear-gradient(180deg,#bbb,#666);
+                                                        box-shadow:0 5px 0 #444;">MAIN MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
