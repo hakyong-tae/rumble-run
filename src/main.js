@@ -154,7 +154,7 @@ const LATERAL_SPEED = 7
 const AI_COUNT      = 7
 const COIN_COUNT    = 160
 const PAD_COUNT     = 28
-const OBST_COUNT    = 44
+const OBST_COUNT    = 64
 const FINISH_Z      = -(TRACK_LENGTH - 10)
 const BOOST_FILL    = 5     // coins to fill manual weapon
 const BARRIER_H     = 0.18  // very low rails — purely visual lane markers
@@ -1127,10 +1127,12 @@ let _hitToastTimer = null
 function showHitToast(attacker, victim) {
   const el = document.getElementById('hit-toast')
   if (!el) return
+  const involvesPlayer = attacker === player || victim === player
   el.innerHTML = `💥 <b>${ballName(attacker)}</b> hit <b>${ballName(victim)}</b>!`
   el.classList.add('show')
+  el.classList.toggle('dim', !involvesPlayer)   // AI-vs-AI shown smaller/dimmer
   clearTimeout(_hitToastTimer)
-  _hitToastTimer = setTimeout(() => el.classList.remove('show'), 2200)
+  _hitToastTimer = setTimeout(() => el.classList.remove('show'), involvesPlayer ? 2200 : 1400)
 }
 
 function getLiveRank() {
@@ -1692,14 +1694,21 @@ function animate() {
     // rubber-band toward this so the pack stays together and everyone can finish.
     let leaderZ = player.z
     aiBalls.forEach(b => { if (b.z < leaderZ) leaderZ = b.z })
+    // Dead-last ball in the field — it aggressively hunts items as a catch-up tool.
+    let lastBall = null, lastZ = -Infinity
+    ;[player, ...aiBalls].forEach(o => {
+      if (!o.finished && o.respawn <= 0 && o.z > lastZ) { lastZ = o.z; lastBall = o }
+    })
 
     aiBalls.forEach(b => {
       if (b.finished) return
       if (b.respawn > 0) return  // respawn loop handles AI too
       const aiW = widthAt(b.z)
       const halfSafe = aiW / 2 - BALL_RADIUS - 0.25
-      // Look ahead scaled by speed (~1s of travel) so faster balls react sooner
-      const look = Math.max(16, b.speed * 1.0)
+      const isLast = (b === lastBall)
+      // Look ahead scaled by speed (~1s of travel); the last-place ball scans much
+      // farther so it can detour to grab items and claw back into the race.
+      const look = (isLast ? 32 : Math.max(16, b.speed * 1.0))
 
       // ── Decide desired lane X (priority: survive hazards > grab items > clean line) ──
       let desiredX = b.x
@@ -1722,7 +1731,8 @@ function animate() {
           }
         }
       }
-      // 3) No hazard nearby → seek nearest item box / boost pad that's safely reachable
+      // 3) No hazard nearby → seek items. The last-place ball ALWAYS prioritises
+      //    item boxes (weapons) as a catch-up tool; others weigh boxes & pads equally.
       if (!hazard) {
         let bestDz = look, bestX = null
         for (const it of itemData) {
@@ -1730,10 +1740,13 @@ function animate() {
           const dz = b.z - it.z
           if (dz > 0 && dz < bestDz && Math.abs(it.x) < halfSafe) { bestDz = dz; bestX = it.x }
         }
-        for (const p of padData) {
-          if (p.used) continue
-          const dz = b.z - p.z
-          if (dz > 0 && dz < bestDz && Math.abs(p.x) < halfSafe) { bestDz = dz; bestX = p.x }
+        // Last-place ball ignores pads if it already found a box to chase
+        if (!(isLast && bestX !== null)) {
+          for (const p of padData) {
+            if (p.used) continue
+            const dz = b.z - p.z
+            if (dz > 0 && dz < bestDz && Math.abs(p.x) < halfSafe) { bestDz = dz; bestX = p.x }
+          }
         }
         if (bestX !== null) {
           desiredX = bestX
@@ -1774,13 +1787,13 @@ function animate() {
         const o = itemData[aiBox]
         o.taken = true
         itemMeshes[aiBox].visible = false
-        // 55% speed boost, 45% missile (only fires if there's someone in front)
-        if (Math.random() < 0.55) {
-          b.boost = Math.max(b.boost, BOOST_TIME)
+        // Mostly missiles when someone's ahead (so the leader gets bombarded);
+        // fall back to a boost only when nobody is in front.
+        const ahead = aiBalls.some(o2 => !o2.finished && o2.respawn <= 0 && o2.z < b.z) || (!player.finished && player.respawn <= 0 && player.z < b.z)
+        if (ahead && Math.random() < 0.75) {
+          fireMissile(b); SFX.missile()
         } else {
-          const ahead = aiBalls.some(o2 => !o2.finished && o2.respawn <= 0 && o2.z < b.z) || (!player.finished && player.respawn <= 0 && player.z < b.z)
-          if (ahead) { fireMissile(b); SFX.missile() }
-          else       { b.boost = Math.max(b.boost, BOOST_TIME) }
+          b.boost = Math.max(b.boost, BOOST_TIME)
         }
       }
 
@@ -1967,8 +1980,8 @@ function animate() {
           hit.vy = Math.max(hit.vy, 20)  // big launch into the air = real time penalty
           hit.mesh.material.emissive.setHex(0xff4444)
           SFX.hit()
-          // Show "[attacker]가 [victim]를 맞췄습니다!" if the player is involved
-          if (m.owner === player || hit === player) showHitToast(m.owner, hit)
+          // Show the hit toast for everyone (player and AI-vs-AI alike)
+          showHitToast(m.owner, hit)
         }
         scene.remove(m.mesh); scene.remove(m.trail)
         missiles.splice(i, 1)

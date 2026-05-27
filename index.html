@@ -255,6 +255,12 @@
     }
     #hit-toast.show { opacity: 1; transform: translateY(-50%) translateX(0); }
     #hit-toast b { color: #ffe44d; }
+    /* AI-vs-AI hits: smaller, dimmer, so player-involved alerts still stand out */
+    #hit-toast.dim {
+      background: rgba(60,60,70,0.78); font-size: 13px; padding: 7px 13px;
+    }
+    #hit-toast.dim.show { opacity: 0.82; }
+    #hit-toast.dim b { color: #ddd; }
 
     /* Race countdown overlay */
     #countdown {
